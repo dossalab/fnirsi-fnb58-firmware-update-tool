@@ -16,7 +16,7 @@
 static void make_packet(hid_buffer_t buffer, uint8_t ep, uint32_t param,
                         const void *payload, size_t len)
 {
-    if (len > MAX_PACKET_PAYLOAD_SIZE) {
+    if (len > MAX_PACKET_PAYLOAD_SIZE || 5 + len > HID_BUFFER_SIZE - 1) {
         len = MAX_PACKET_PAYLOAD_SIZE;
     }
 
