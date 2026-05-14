@@ -12,7 +12,7 @@ else
 LDLIBS  := -lhidapi-hidraw
 endif
 
-.PHONY: all linux macos brew-install-hidapi clean
+.PHONY: all linux macos build brew-install-hidapi clean
 
 all:
 ifeq ($(UNAME_S),Linux)
@@ -25,10 +25,11 @@ else
 	$(error Unsupported OS: $(UNAME_S))
 endif
 
-linux:
-	$(CC) $(CFLAGS) $(SRCS) -o $(TARGET) $(LDFLAGS) $(LDLIBS)
+linux: build
 
-macos: brew-install-hidapi
+macos: brew-install-hidapi build
+
+build:
 	$(CC) $(CFLAGS) $(SRCS) -o $(TARGET) $(LDFLAGS) $(LDLIBS)
 
 brew-install-hidapi:
