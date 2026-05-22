@@ -57,7 +57,12 @@ static bool read_file_handle(FILE *file, void **out, size_t *size)
     for (;;) {
         size_t space = buffer_size - written;
         if (space < chunk_size) {
-            buffer = realloc(buffer, buffer_size + chunk_size);
+            void *new_buf = realloc(buffer, buffer_size + chunk_size);
+            if (!new_buf) {
+                free(buffer);
+                return false;
+            }
+            buffer = new_buf;
             buffer_size += chunk_size;
             continue;
         }
