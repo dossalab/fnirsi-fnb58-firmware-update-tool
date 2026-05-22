@@ -99,10 +99,8 @@ static bool fw_upload_write_data(hid_device *hid, size_t i, void *data, size_t l
     return ok && listen_for_response(hid, write_timeout_ms);
 }
 
-static bool fw_update_with_handle(hid_device *handle, void *fw, size_t fw_size)
+static bool fw_update_with_handle(hid_device *handle, void *fw, size_t fw_size, uint8_t fw_version)
 {
-    // XXX:I'm not sure whether that has any effect. This is extracted from FW file name.
-    const uint8_t fw_version = 68;
     bool ok;
 
     printf("clearing flash...\n");
@@ -142,7 +140,7 @@ static bool fw_update_with_handle(hid_device *handle, void *fw, size_t fw_size)
     return ok;
 }
 
-static bool open_dev_and_update(void *fw, size_t fw_size)
+static bool open_dev_and_update(void *fw, size_t fw_size, uint8_t fw_version)
 {
     const uint16_t vid = 0x0483;
     const uint16_t pid = 0x0038;
@@ -153,7 +151,7 @@ static bool open_dev_and_update(void *fw, size_t fw_size)
         return false;
     }
 
-    bool ok = fw_update_with_handle(handle, fw, fw_size);
+    bool ok = fw_update_with_handle(handle, fw, fw_size, fw_version);
 
     hid_close(handle);
     return ok;
@@ -178,7 +176,15 @@ int main(int argc, char **argv)
 
     printf("'%s' read, %zu bytes\n", filename, fw_size);
 
-    ok = open_dev_and_update(fw, fw_size);
+    uint8_t fw_version = 68;
+    const char *base = strrchr(filename, '/');
+    base = base ? base + 1 : filename;
+    if (sscanf(base, "Fnb58V%*u.%hhu", &fw_version) != 1) {
+        fprintf(stderr, "warning: cannot parse fw_version from '%s', using %u\n",
+                base, (unsigned)fw_version);
+    }
+
+    ok = open_dev_and_update(fw, fw_size, fw_version);
     free(fw);
 
     if (ok) {
