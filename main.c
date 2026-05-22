@@ -42,7 +42,11 @@ static bool listen_for_response(hid_device *hid, int timeout_ms)
     int result = hid_read_timeout(hid, buffer, MAX_PACKET_PAYLOAD_SIZE, timeout_ms);
     bool ok = (result > 0);
     if (!ok) {
-        printf("read error!\n");
+        if (result == 0) {
+            printf("read timeout!\n");
+        } else {
+            printf("read error!\n");
+        }
         return false;
     }
 
