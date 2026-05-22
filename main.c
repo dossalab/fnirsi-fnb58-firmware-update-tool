@@ -39,7 +39,8 @@ static bool listen_for_response(hid_device *hid, int timeout_ms)
 
     memset(buffer, 0, MAX_PACKET_PAYLOAD_SIZE);
 
-    bool ok = hid_read_timeout(hid, buffer, MAX_PACKET_PAYLOAD_SIZE, timeout_ms);
+    int result = hid_read_timeout(hid, buffer, MAX_PACKET_PAYLOAD_SIZE, timeout_ms);
+    bool ok = (result > 0);
     if (!ok) {
         printf("read error!\n");
         return false;
