@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <hidapi/hidapi.h>
 #include <unistd.h>
 #include <stdbool.h>
@@ -94,10 +95,9 @@ static bool fw_upload_write_data(hid_device *hid, size_t i, void *data, size_t l
     return ok && listen_for_response(hid, write_timeout_ms);
 }
 
-static bool fw_update_with_handle(hid_device *handle, void *fw, size_t fw_size)
+static bool fw_update_with_handle(hid_device *handle, void *fw, size_t fw_size,
+                                  uint16_t fw_version)
 {
-    // XXX:I'm not sure whether that has any effect. This is extracted from FW file name.
-    const uint8_t fw_version = 68;
     bool ok;
 
     printf("clearing flash...\n");
@@ -137,7 +137,7 @@ static bool fw_update_with_handle(hid_device *handle, void *fw, size_t fw_size)
     return ok;
 }
 
-static bool open_dev_and_update(void *fw, size_t fw_size)
+static bool open_dev_and_update(void *fw, size_t fw_size, uint16_t fw_version)
 {
     const uint16_t vid = 0x0483;
     const uint16_t pid = 0x0038;
@@ -148,20 +148,131 @@ static bool open_dev_and_update(void *fw, size_t fw_size)
         return false;
     }
 
-    bool ok = fw_update_with_handle(handle, fw, fw_size);
+    bool ok = fw_update_with_handle(handle, fw, fw_size, fw_version);
 
     hid_close(handle);
     return ok;
 }
 
+/* Derive the version code the device expects from the firmware file name.
+ *
+ * The .ufn payload is fully encrypted (no header, no magic, size always a
+ * multiple of the cipher block), so the file name is the only place the
+ * version appears in plain form. FNIRSI's own naming maps to the code by
+ * simply dropping the dots:
+ *
+ *   Fnb58V0.68.ufn  -> 68    (the value the original tool hardcoded)
+ *   Fnb58V1.0.3.ufn -> 103   (three-component versions do exist)
+ *   Fnb58V1.15.ufn  -> 115
+ *
+ * A candidate is a 'v'/'V' followed by a digit, then a run of digits and
+ * dots. Real versions always contain a dot, so a dotted candidate wins over
+ * a bare one ("v2_final" style words in a name do not hijack the result).
+ */
+static bool parse_version_at(const char *p, uint16_t *out, bool *had_dot)
+{
+    unsigned long code = 0;
+    bool any_digit = false;
+
+    *had_dot = false;
+
+    for (const char *q = p; isdigit((unsigned char)*q) || *q == '.'; q++) {
+        if (*q == '.') {
+            *had_dot = true;
+            continue;
+        }
+
+        code = code * 10 + (unsigned long)(*q - '0');
+        any_digit = true;
+
+        if (code > UINT16_MAX) {
+            return false;
+        }
+    }
+
+    if (!any_digit) {
+        return false;
+    }
+
+    *out = (uint16_t)code;
+    return true;
+}
+
+static bool version_from_filename(const char *path, uint16_t *out)
+{
+    const char *base = strrchr(path, '/');
+    base = base? base + 1 : path;
+
+    bool found = false;
+    uint16_t fallback = 0;
+
+    for (const char *p = base; *p; p++) {
+        if ((*p != 'v' && *p != 'V') || !isdigit((unsigned char)p[1])) {
+            continue;
+        }
+
+        uint16_t code;
+        bool had_dot;
+
+        if (!parse_version_at(p + 1, &code, &had_dot)) {
+            continue;
+        }
+
+        if (had_dot) {
+            *out = code;
+            return true;
+        }
+
+        if (!found) {
+            fallback = code;
+            found = true;
+        }
+    }
+
+    if (found) {
+        *out = fallback;
+    }
+
+    return found;
+}
 int main(int argc, char **argv)
 {
-    if (argc != 2) {
-        printf("usage: %s: <filename.ufn>\n", argv[0]);
+    const char *filename = NULL;
+    bool have_override = false;
+    uint16_t fw_version = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--version") == 0) {
+            if (i + 1 >= argc) {
+                printf("--version needs a value\n");
+                return 1;
+            }
+
+            char *end;
+            unsigned long v = strtoul(argv[++i], &end, 10);
+
+            if (*end || v > UINT16_MAX) {
+                printf("invalid version code '%s'\n", argv[i]);
+                return 1;
+            }
+
+            fw_version = (uint16_t)v;
+            have_override = true;
+        } else if (!filename) {
+            filename = argv[i];
+        } else {
+            filename = NULL;
+            break;
+        }
+    }
+
+    if (!filename) {
+        printf("usage: %s [--version <code>] <filename.ufn>\n", argv[0]);
+        printf("  the version code is normally derived from the file name\n");
+        printf("  (Fnb58V1.15.ufn -> 115); --version overrides that.\n");
         return 1;
     }
 
-    const char *filename = argv[1];
     void *fw;
     size_t fw_size = 0;
 
@@ -173,7 +284,18 @@ int main(int argc, char **argv)
 
     printf("'%s' read, %zu bytes\n", filename, fw_size);
 
-    ok = open_dev_and_update(fw, fw_size);
+    if (have_override) {
+        printf("declaring firmware version code %u (from --version)\n", fw_version);
+    } else if (version_from_filename(filename, &fw_version)) {
+        printf("declaring firmware version code %u (from file name)\n", fw_version);
+    } else {
+        printf("unable to derive a version code from file name '%s'\n", filename);
+        printf("pass --version <code> explicitly (e.g. 115 for V1.15)\n");
+        free(fw);
+        return 1;
+    }
+
+    ok = open_dev_and_update(fw, fw_size, fw_version);
     free(fw);
 
     if (ok) {
